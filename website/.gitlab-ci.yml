@@ -1,0 +1,51 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  AWS_DEFAULT_REGION: us-east-1
+  ECR_REGISTRY: 173454475008.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_NAME: sample-html-website
+
+services:
+  - docker:dind
+
+build:
+  stage: build
+  script:
+    - echo "Building Docker image..."
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHA .
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHA $IMAGE_NAME:latest
+    - echo "Build complete!"
+  artifacts:
+    reports:
+      dotenv: build.env
+  only:
+    - master
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Installing AWS CLI..."
+    - apk add --no-cache python3 py3-pip
+    - pip3 install awscli --break-system-packages
+    - echo "Configuring AWS credentials..."
+    - aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+    - aws configure set region $AWS_DEFAULT_REGION
+    - echo "Rebuilding image for deploy..."
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHA .
+    - echo "Logging into ECR..."
+    - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+    - echo "Creating ECR repository if it doesn't exist..."
+    - aws ecr describe-repositories --repository-names $IMAGE_NAME --region $AWS_DEFAULT_REGION || aws ecr create-repository --repository-name $IMAGE_NAME --region $AWS_DEFAULT_REGION
+    - echo "Tagging images..."
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHA $ECR_REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHA $ECR_REGISTRY/$IMAGE_NAME:latest
+    - echo "Pushing to ECR..."
+    - docker push $ECR_REGISTRY/$IMAGE_NAME:$CI_COMMIT_SHA
+    - docker push $ECR_REGISTRY/$IMAGE_NAME:latest
+    - echo "✅ Deployment complete!"
+  only:
+    - master
